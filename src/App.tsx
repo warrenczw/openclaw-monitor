@@ -1,329 +1,417 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Activity,
-  Cpu,
-  Database,
-  Globe,
-  Shield,
-  Zap,
-  Search,
-  Settings,
-  Bell,
-  BarChart3,
-  Clock,
-  Terminal,
-  Server,
-  Layers,
-  CheckCircle2,
-  AlertCircle,
-  TrendingUp,
-  CreditCard
+  Activity, Cpu, Database, Zap, Search, Settings, Bell, Clock, Terminal, Server, Layers, CheckCircle2, AlertCircle, TrendingUp, CreditCard, Calendar, BarChart, ChevronRight, Download
 } from 'lucide-react';
 import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  AreaChart,
-  Area
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart as RechartsBarChart, Bar, Legend
 } from 'recharts';
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { format, subDays, startOfDay, startOfMonth, startOfYear, isAfter } from 'date-fns';
+import { db, type StatEntry, type TokenEntry, cleanupOldData } from './db';
 
 function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// Mock Data Generators
-const generateLogs = () => [
-  { id: 1, time: '18:02:11', type: 'info', msg: '系统核心初始化成功' },
-  { id: 2, time: '18:02:15', type: 'success', msg: '已成功建立与 OpenAI API 网关的连接' },
-  { id: 3, time: '18:03:01', type: 'info', msg: '机器人 "Claw-01" 开始执行任务: "深度数据分析"' },
-  { id: 4, time: '18:04:22', type: 'warning', msg: '检测到 B 区会话集群延迟异常增加' },
-  { id: 5, time: '18:05:10', type: 'info', msg: '后台内存清理程序定期维护完成' },
-];
-
-const generateStats = () => [
-  { name: '18:00', cpu: 32, ram: 45, latency: 120 },
-  { name: '18:01', cpu: 45, ram: 48, latency: 150 },
-  { name: '18:02', cpu: 28, ram: 46, latency: 110 },
-  { name: '18:03', cpu: 55, ram: 52, latency: 180 },
-  { name: '18:04', cpu: 42, ram: 55, latency: 140 },
-  { name: '18:05', cpu: 38, ram: 53, latency: 130 },
-];
+type Granularity = 'hour' | 'day' | 'month' | 'year';
 
 const App = () => {
-  const [logs, setLogs] = useState(generateLogs());
-  const [stats, setStats] = useState(generateStats());
-  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString('zh-CN'));
-
-  // UI States
+  // Config & UI States
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isNotifyOpen, setIsNotifyOpen] = useState(false);
-  const [isProfileOpen, setIsProfileOpen] = useState(false);
-
-  // Config States (Persistent)
   const [config, setConfig] = useState(() => {
     const saved = localStorage.getItem('openclaw-config');
-    return saved ? JSON.parse(saved) : {
-      serverUrl: 'http://localhost:2026',
-      token: '',
-      isLive: false
-    };
+    return saved ? JSON.parse(saved) : { serverUrl: 'http://localhost:2026', token: '', isLive: false };
   });
 
+  // Data States
+  const [cpuStats, setCpuStats] = useState<StatEntry[]>([]);
+  const [tokenStats, setTokenStats] = useState<TokenEntry[]>([]);
+  const [logs, setLogs] = useState<{ id: number; time: string; type: string; msg: string }[]>([]);
+  const [timeGranularity, setTimeGranularity] = useState<Granularity>('hour');
+  const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString('zh-CN'));
+
+  // Load Initial Data
+  useEffect(() => {
+    const loadData = async () => {
+      await cleanupOldData();
+      const s = await db.stats.orderBy('timestamp').reverse().limit(50).toArray();
+      const t = await db.tokens.orderBy('timestamp').reverse().toArray();
+      setCpuStats(s.reverse());
+      setTokenStats(t.reverse());
+    };
+    loadData();
+  }, []);
+
+  // Persistent storage of config
   useEffect(() => {
     localStorage.setItem('openclaw-config', JSON.stringify(config));
   }, [config]);
 
-  const notifications = [
-    { id: 1, text: '检测到新的机器人实例: Claw-05', time: '5分钟前', unread: true },
-    { id: 2, text: 'API 调用额度已消耗 80%', time: '12分钟前', unread: true },
-    { id: 3, text: '系统于 18:00 完成版本更新', time: '30分钟前', unread: false },
-  ];
-
+  // Real-time Update Loop (placeholder for real API)
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date().toLocaleTimeString('zh-CN'));
-
-      if (!config.isLive) {
-        setLogs(prev => {
-          const next = [...prev];
-          if (next.length > 8) next.shift();
-          return next;
-        });
-
-        setStats(prev => {
-          const last = prev[prev.length - 1];
-          const newTime = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-          return [...prev.slice(1), {
-            name: newTime,
-            cpu: Math.min(100, Math.max(10, last.cpu + (Math.random() - 0.5) * 15)),
-            ram: Math.min(100, Math.max(10, last.ram + (Math.random() - 0.5) * 5)),
-            latency: Math.min(500, Math.max(50, last.latency + (Math.random() - 0.5) * 40)),
-          }];
-        });
+      if (config.isLive) {
+        fetchRealData();
       }
-    }, 3000);
+    }, 5000);
     return () => clearInterval(timer);
-  }, [config.isLive]);
+  }, [config.isLive, config.serverUrl]);
+
+  const fetchRealData = async () => {
+    try {
+      // ⚠️ 这里是您的对接点: 替换为您真实的 OpenClaw 监控接口路径
+      const response = await fetch(`${config.serverUrl}/api/v1/monitor`, {
+        headers: { 'Authorization': `Bearer ${config.token}` }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+
+        // 1. 存入本地数据库
+        const newStat = {
+          timestamp: Date.now(),
+          cpu: data.cpu,
+          ram: data.ram,
+          latency: data.latency
+        };
+        await db.stats.add(newStat);
+
+        if (data.tokenUsage) {
+          await db.tokens.add({
+            timestamp: Date.now(),
+            model: data.tokenUsage.model || 'Unknown',
+            inputTokens: data.tokenUsage.input || 0,
+            outputTokens: data.tokenUsage.output || 0,
+            totalTokens: data.tokenUsage.total || 0,
+            cost: data.tokenUsage.cost || 0
+          });
+        }
+
+        // 2. 更新页面状态流
+        setCpuStats(prev => [...prev.slice(-49), newStat]);
+        if (data.newLog) {
+          setLogs(prev => [{ id: Date.now(), time: new Date().toLocaleTimeString(), ...data.newLog }, ...prev.slice(0, 10)]);
+        }
+      }
+    } catch (err) {
+      console.warn("无法连接到监控接口，请检查服务器配置。");
+    }
+  };
+
+  // Aggregated Data for Token Display
+  const tokenChartData = useMemo(() => {
+    const now = Date.now();
+    let filterDate: number;
+
+    switch (timeGranularity) {
+      case 'day': filterDate = startOfDay(subDays(now, 7)).getTime(); break;
+      case 'month': filterDate = startOfMonth(subDays(now, 30)).getTime(); break;
+      case 'year': filterDate = startOfYear(now).getTime(); break;
+      default: filterDate = now - (6 * 60 * 60 * 1000); // 最近 6 小时
+    }
+
+    const filtered = tokenStats.filter(t => t.timestamp > filterDate);
+
+    // 按时间聚合 (根据粒度)
+    const grouped: Record<string, any> = {};
+    filtered.forEach(t => {
+      let key: string;
+      if (timeGranularity === 'hour') key = format(t.timestamp, 'HH:mm');
+      else if (timeGranularity === 'day') key = format(t.timestamp, 'MM-dd');
+      else if (timeGranularity === 'month') key = format(t.timestamp, 'yyyy-MM');
+      else key = format(t.timestamp, 'yyyy');
+
+      if (!grouped[key]) grouped[key] = { name: key, 输入: 0, 输出: 0, 总量: 0, 成本: 0 };
+      grouped[key].输入 += t.inputTokens;
+      grouped[key].输出 += t.outputTokens;
+      grouped[key].总量 += t.totalTokens;
+      grouped[key].成本 += t.cost;
+    });
+
+    return Object.values(grouped);
+  }, [tokenStats, timeGranularity]);
+
+  const lastTokenStat = tokenStats[tokenStats.length - 1] || { inputTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 };
 
   return (
-    <div className="min-h-screen p-4 md:p-8 max-w-[1400px] mx-auto relative overflow-x-hidden">
-      {/* Header */}
-      <nav className="flex items-center justify-between mb-8 relative z-50">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(88,101,242,0.5)]">
+    <div className="min-h-screen p-4 md:p-8 max-w-[1500px] mx-auto relative bg-[#0a0f1d] text-slate-100 font-sans">
+
+      {/* 顶部导航 */}
+      <nav className="flex items-center justify-between mb-10">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-gradient-to-br from-indigo-600 to-blue-500 rounded-2xl shadow-lg ring-4 ring-indigo-500/20">
             <Zap className="text-white fill-white" size={24} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">OpenClaw <span className="text-primary">监测中心</span></h1>
-            <p className="text-xs text-text-muted">v2026.3.2 • 企业版</p>
+            <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 tracking-tighter">OPENCLAW <span className="font-light">PRO MONITOR</span></h1>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={cn("inline-block w-2 h-2 rounded-full", config.isLive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400')} />
+              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">{config.isLive ? '生产环境在线' : '离线/本地存储模式'}</p>
+            </div>
           </div>
         </div>
 
-        <div className="hidden md:flex items-center gap-6 glass px-6 py-2">
-          <div className="flex items-center gap-2">
-            <div className={cn("w-2 h-2 rounded-full animate-pulse", config.isLive ? "bg-success" : "bg-warning")} />
-            <span className="text-sm font-medium">状态: {config.isLive ? '生产后端' : '演示模式'}</span>
+        <div className="flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-6 glass px-6 py-2.5 rounded-full border border-white/5 bg-white/5 mr-4">
+            <div className="flex flex-col">
+              <span className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">系统时钟</span>
+              <span className="text-xs font-mono font-bold">{currentTime}</span>
+            </div>
           </div>
-          <div className="w-px h-4 bg-border" />
-          <div className="flex items-center gap-2 text-text-muted">
-            <Clock size={16} />
-            <span className="text-sm font-mono">{currentTime}</span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 relative">
-          <div className="relative">
-            <button
-              onClick={() => { setIsNotifyOpen(!isNotifyOpen); setIsSettingsOpen(false); setIsProfileOpen(false); }}
-              className={cn("p-2 hover:bg-white/5 rounded-lg transition-colors border-none bg-transparent relative", isNotifyOpen && "bg-white/10")}
-            >
-              <Bell size={20} className={cn("text-text-muted", isNotifyOpen && "text-primary")} />
-              {notifications.some(n => n.unread) && <span className="absolute top-2 right-2 w-2 h-2 bg-danger rounded-full border-2 border-background" />}
-            </button>
-            <AnimatePresence>
-              {isNotifyOpen && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-3 w-80 glass p-4 shadow-2xl z-[100] border border-white/10">
-                  <h3 className="font-bold text-sm mb-4">最新通知</h3>
-                  <div className="space-y-3">
-                    {notifications.map(n => (
-                      <div key={n.id} className="p-2 hover:bg-white/5 rounded-lg cursor-pointer">
-                        <p className="text-xs font-medium">{n.text}</p>
-                        <p className="text-[10px] text-text-muted mt-1">{n.time}</p>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <button
-            onClick={() => { setIsSettingsOpen(!isSettingsOpen); setIsNotifyOpen(false); setIsProfileOpen(false); }}
-            className={cn("p-2 hover:bg-white/5 rounded-lg transition-colors border-none bg-transparent", isSettingsOpen && "bg-white/10")}
-          >
-            <Settings size={20} className={cn("text-text-muted", isSettingsOpen && "text-primary")} />
-          </button>
-
-          <div className="relative">
-            <button onClick={() => { setIsProfileOpen(!isProfileOpen); setIsSettingsOpen(false); setIsNotifyOpen(false); }} className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 overflow-hidden border border-white/20 hover:scale-105 transition-transform">
-              <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=OpenClaw" alt="Avatar" />
-            </button>
-            <AnimatePresence>
-              {isProfileOpen && (
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-3 w-48 glass p-2 shadow-2xl z-[100]">
-                  <div className="px-3 py-2 border-b border-white/5 mb-1">
-                    <p className="text-xs font-bold">管理员账号</p>
-                    <p className="text-[10px] text-text-muted">admin@openclaw.local</p>
-                  </div>
-                  <button className="w-full text-left px-3 py-2 text-xs hover:bg-white/5 rounded transition-colors text-danger">退出登录</button>
-                </motion.div>
-              )}
-            </AnimatePresence>
+          <IconButton icon={<Bell size={20} />} />
+          <IconButton icon={<Settings size={20} />} onClick={() => setIsSettingsOpen(true)} active={isSettingsOpen} />
+          <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 p-1 border border-white/10 ml-2">
+            <img src={`https://api.dicebear.com/7.x/bottts/svg?seed=OpenClaw&backgroundColor=b6e3f4,c0aede,d1d4f9`} className="rounded-xl" alt="avatar" />
           </div>
         </div>
       </nav>
 
-      {/* Main Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6 relative">
-        {/* Settings Drawer */}
-        <AnimatePresence>
-          {isSettingsOpen && (
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="absolute right-0 top-0 w-80 h-full glass p-6 z-[60] shadow-[-20px_0_40px_rgba(0,0,0,0.5)] flex flex-col gap-6">
-              <div className="flex items-center justify-between">
-                <h2 className="font-bold flex items-center gap-2 underline decoration-primary decoration-2 underline-offset-4"><Database size={18} />环境配置</h2>
-                <button onClick={() => setIsSettingsOpen(false)} className="text-text-muted hover:text-white">✕</button>
+      {/* 核心指标卡片 */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <StatItem
+          icon={<Cpu className="text-indigo-400" />}
+          label="实时 CPU"
+          value={`${cpuStats[cpuStats.length - 1]?.cpu?.toFixed(1) || 0}%`}
+          sub="多线程负载"
+          color="indigo"
+        />
+        <StatItem
+          icon={<Layers className="text-purple-400" />}
+          label="内存占用"
+          value={`${cpuStats[cpuStats.length - 1]?.ram?.toFixed(1) || 0}%`}
+          sub="JVM / 容器限制"
+          color="purple"
+        />
+        <StatItem
+          icon={<Zap className="text-amber-400" />}
+          label="Token 消耗 (今日)"
+          value={lastTokenStat.totalTokens.toLocaleString()}
+          sub="输入 + 输出总量"
+          color="amber"
+          trend="+5.2%"
+        />
+        <StatItem
+          icon={<CreditCard className="text-emerald-400" />}
+          label="预计成本"
+          value={`¥${lastTokenStat.cost.toFixed(2)}`}
+          sub="基于模型单价计算"
+          color="emerald"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+        {/* Token 消耗图表 (核心更新项) */}
+        <section className="lg:col-span-8 space-y-8">
+          <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 bg-[#141b2d]/50 relative overflow-hidden">
+            <div className="flex items-center justify-between mb-10 relative z-10">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-500/10 rounded-xl text-indigo-400"><BarChart size={20} /></div>
+                <h2 className="text-xl font-bold">Token 消耗统计</h2>
               </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="text-[10px] uppercase font-bold text-text-muted mb-1 block">服务器地址</label>
-                  <input type="text" value={config.serverUrl} onChange={(e) => setConfig({ ...config, serverUrl: e.target.value })} placeholder="http://127.0.0.1:2026" className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary transition-colors text-white" />
-                </div>
-                <div>
-                  <label className="text-[10px] uppercase font-bold text-text-muted mb-1 block">API 访问令牌</label>
-                  <input type="password" value={config.token} onChange={(e) => setConfig({ ...config, token: e.target.value })} placeholder="请输入密钥" className="w-full bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary transition-colors text-white" />
-                </div>
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-xs text-text-main">连接生产环境</span>
-                  <button onClick={() => setConfig({ ...config, isLive: !config.isLive })} className={cn("w-12 h-6 rounded-full transition-colors relative", config.isLive ? "bg-success" : "bg-white/10")}>
-                    <div className={cn("absolute top-1 w-4 h-4 bg-white rounded-full transition-all", config.isLive ? "left-7" : "left-1")} />
+              <div className="flex items-center bg-black/30 p-1.5 rounded-2xl border border-white/5">
+                {(['hour', 'day', 'month', 'year'] as Granularity[]).map(g => (
+                  <button
+                    key={g}
+                    onClick={() => setTimeGranularity(g)}
+                    className={cn(
+                      "px-4 py-1.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all",
+                      timeGranularity === g ? "bg-indigo-600 text-white shadow-lg" : "text-slate-500 hover:text-slate-300"
+                    )}
+                  >
+                    {g === 'hour' ? '实时' : g === 'day' ? '日' : g === 'month' ? '月' : '年'}
                   </button>
-                </div>
+                ))}
               </div>
-              <div className="mt-auto bg-primary/10 p-3 rounded-lg border border-primary/20">
-                <p className="text-[10px] text-primary font-bold mb-1 italic">提示:</p>
-                <p className="text-[10px] text-text-muted leading-relaxed">参数将立即应用于 API 请求。关闭生产环境连接将自动切回演示模式。</p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+            </div>
 
-        <StatCard icon={<Cpu className="text-blue-400" />} label="CPU 使用率" value={`${Math.round(stats[stats.length - 1].cpu)}%`} trend="+2.4%" sub="4核 集群节点" className="md:col-span-3" />
-        <StatCard icon={<Layers className="text-purple-400" />} label="内存 占用" value={`${Math.round(stats[stats.length - 1].ram)}%`} trend="-0.5%" sub="12.4GB / 24GB" className="md:col-span-3" />
-        <StatCard icon={<Activity className="text-green-400" />} label="平均延迟" value={`${Math.round(stats[stats.length - 1].latency)}ms`} trend="稳定" sub="华东边缘节点" className="md:col-span-3" />
-        <StatCard icon={<CreditCard className="text-amber-400" />} label="当日支出" value="¥84.50" trend="+12%" sub="预计本月 ¥2,450" className="md:col-span-3" />
+            <div className="h-[350px] w-full relative z-10">
+              <ResponsiveContainer width="100%" height="100%">
+                <RechartsBarChart data={tokenChartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                  <XAxis dataKey="name" stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
+                  <YAxis stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
+                  <Tooltip cursor={{ fill: '#ffffff08' }} contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #ffffff10', borderRadius: '12px' }} />
+                  <Legend />
+                  <Bar dataKey="输入" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="输出" fill="#a855f7" radius={[4, 4, 0, 0]} />
+                </RechartsBarChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="absolute top-0 right-0 w-[400px] h-[400px] bg-indigo-500/5 blur-[100px] -z-1" />
+          </div>
 
-        <div className="md:col-span-8 glass p-6 min-h-[400px]">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-2"><TrendingUp className="text-primary" size={20} /><h2 className="font-semibold text-lg">性能指标趋势</h2></div>
-            <div className="flex gap-2">
-              <button className="text-xs px-3 py-1 bg-primary/20 text-primary border border-primary/30 rounded-full">实时</button>
-              <button className="text-xs px-3 py-1 hover:bg-white/5 text-text-muted rounded-full">1h</button>
+          <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 bg-[#141b2d]/50">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="p-2.5 bg-blue-500/10 rounded-xl text-blue-400"><Activity size={20} /></div>
+              <h2 className="text-xl font-bold">负载趋势</h2>
+            </div>
+            <div className="h-[250px] w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={cpuStats}>
+                  <defs>
+                    <linearGradient id="colorArea" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                      <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                  <XAxis dataKey="timestamp" hide />
+                  <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: 'none', borderRadius: '8px' }} labelStyle={{ display: 'none' }} />
+                  <Area type="monotone" dataKey="cpu" stroke="#6366f1" strokeWidth={3} fillOpacity={1} fill="url(#colorArea)" />
+                  <Area type="monotone" dataKey="ram" stroke="#a855f7" strokeWidth={2} fillOpacity={0} />
+                </AreaChart>
+              </ResponsiveContainer>
             </div>
           </div>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={stats}>
-                <defs><linearGradient id="colorCpu" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#5865F2" stopOpacity={0.3} /><stop offset="95%" stopColor="#5865F2" stopOpacity={0} /></linearGradient></defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                <XAxis dataKey="name" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} />
-                <YAxis stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} />
-                <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px' }} itemStyle={{ color: '#fff' }} />
-                <Area type="monotone" dataKey="cpu" name="CPU 使用率" stroke="#5865F2" strokeWidth={2} fillOpacity={1} fill="url(#colorCpu)" />
-                <Area type="monotone" dataKey="ram" name="内存占用" stroke="#8b5cf6" strokeWidth={2} fillOpacity={0} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        </section>
 
-        <div className="md:col-span-4 glass p-6 flex flex-col">
-          <div className="flex items-center gap-2 mb-6"><Terminal className="text-success" size={20} /><h2 className="font-semibold text-lg">系统实时日志</h2></div>
-          <div className="flex-1 space-y-4 overflow-y-auto max-h-[300px] pr-2">
-            <AnimatePresence mode="popLayout">
-              {logs.map((log) => (
-                <motion.div key={log.id} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} className="p-3 rounded-lg bg-black/20 border border-white/5 flex gap-3">
-                  <span className="text-[10px] font-mono text-text-muted mt-1">{log.time}</span>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      {log.type === 'success' && <CheckCircle2 size={12} className="text-success" />}
-                      {log.type === 'warning' && <AlertCircle size={12} className="text-warning" />}
-                      {log.type === 'info' && <div className="w-1.5 h-1.5 rounded-full bg-primary/60" />}
-                      <span className={cn("text-[10px] font-bold uppercase tracking-wider", log.type === 'success' ? "text-success" : log.type === 'warning' ? "text-warning" : "text-primary/80")}>
-                        {log.type === 'success' ? '正常' : log.type === 'warning' ? '警告' : '提示'}
+        {/* 侧边日志 */}
+        <aside className="lg:col-span-4 space-y-6">
+          <div className="glass-card p-6 rounded-[2rem] border border-white/5 bg-[#141b2d]/50 flex flex-col h-full min-h-[500px]">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2 text-emerald-400">
+                <Terminal size={18} />
+                <span className="font-black text-xs uppercase tracking-widest">系统控制台</span>
+              </div>
+              <Search size={14} className="text-slate-500 cursor-pointer" />
+            </div>
+            <div className="flex-1 space-y-4 overflow-y-auto pr-2 custom-scrollbar">
+              {logs.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-40 py-20 text-center">
+                  <Database size={40} className="mb-4" />
+                  <p className="text-xs font-bold uppercase">在此处显示实时日志流<br />请配置后端连接</p>
+                </div>
+              ) : (
+                logs.map(log => (
+                  <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} key={log.id} className="p-3 bg-white/5 rounded-2xl border border-white/5">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-[10px] font-mono text-slate-500">{log.time}</span>
+                      <span className={cn("text-[9px] font-black uppercase px-2 py-0.5 rounded", log.type === 'error' ? 'bg-red-500/20 text-red-400' : 'bg-indigo-500/20 text-indigo-400')}>
+                        {log.type}
                       </span>
                     </div>
-                    <p className="text-xs text-text-main/90 leading-relaxed">{log.msg}</p>
-                  </div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
+                    <p className="text-xs leading-relaxed text-slate-300">{log.msg}</p>
+                  </motion.div>
+                ))
+              )}
+            </div>
+            <button className="w-full mt-6 py-4 bg-white/5 rounded-2xl text-[10px] font-bold uppercase text-slate-400 hover:text-white transition-all flex items-center justify-center gap-2">
+              查看完整日志报告 <ChevronRight size={14} />
+            </button>
           </div>
-        </div>
+        </aside>
 
-        <div className="md:col-span-12 glass p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-2"><Server className="text-primary" size={20} /><h2 className="font-semibold text-lg">AI 机器人实例列表</h2></div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <RobotCard name="Claw-观察者-01" status="running" type="GPT-4o" tasks={12} />
-            <RobotCard name="Research-Bot-研学" status="running" type="Claude 3.5 Sonnet" tasks={8} />
-            <RobotCard name="Legacy-后台任务" status="paused" type="GPT-3.5-Turbo" tasks={0} />
-          </div>
-        </div>
       </div>
+
+      {/* 配置面板 */}
+      <AnimatePresence>
+        {isSettingsOpen && (
+          <SettingsPanel
+            config={config}
+            setConfig={setConfig}
+            onClose={() => setIsSettingsOpen(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <style>{`
+        .glass-card { backdrop-filter: blur(40px); background: linear-gradient(145deg, rgba(31,41,55,0.4) 0%, rgba(17,24,39,0.5) 100%); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 99px; }
+      `}</style>
     </div>
   );
 };
 
-const StatCard = ({ icon, label, value, trend, sub, className }: any) => (
-  <div className={cn("glass p-5 flex flex-col gap-3", className)}>
-    <div className="flex items-start justify-between">
-      <div className="p-2 bg-white/5 rounded-lg border border-white/5">{icon}</div>
-      <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border", trend.includes('+') ? "bg-success/10 text-success border-success/20" : trend === "稳定" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" : "bg-danger/10 text-danger border-danger/20")}>{trend}</span>
+const StatItem = ({ icon, label, value, sub, color, trend }: any) => (
+  <div className="glass-card p-6 rounded-[2rem] border border-white/5 bg-[#141b2d]/50 hover:border-indigo-500/30 transition-all cursor-default group overflow-hidden relative">
+    <div className="flex items-start justify-between mb-4 relative z-10">
+      <div className={cn("p-3 rounded-2xl bg-black/20 text-current transition-transform group-hover:scale-110", `text-${color}-400`)}>
+        {icon}
+      </div>
+      {trend && (
+        <span className="text-[10px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-lg border border-emerald-500/10">{trend}</span>
+      )}
     </div>
-    <div>
-      <p className="text-xs text-text-muted font-medium mb-1">{label}</p>
-      <p className="text-2xl font-bold tracking-tight glow-text">{value}</p>
-      <p className="text-[10px] text-text-muted mt-1">{sub}</p>
+    <div className="relative z-10">
+      <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-1">{label}</p>
+      <p className="text-2xl font-black text-white glow-text">{value}</p>
+      <p className="text-[10px] text-slate-500 mt-1 font-bold">{sub}</p>
     </div>
+    <div className={cn("absolute -bottom-10 -right-10 w-32 h-32 blur-[60px] opacity-10 group-hover:opacity-20 transition-all", `bg-${color}-500`)} />
   </div>
 );
 
-const RobotCard = ({ name, status, type, tasks }: any) => (
-  <div className="p-4 rounded-xl border border-white/5 bg-white/[0.02] hover:bg-white/[0.05] transition-all cursor-pointer group">
-    <div className="flex items-center justify-between mb-4">
-      <div className="flex items-center gap-3">
-        <div className={cn("w-3 h-3 rounded-full", status === 'running' ? "bg-success animate-pulse" : "bg-text-muted")} />
-        <span className="font-semibold text-sm group-hover:text-primary transition-colors">{name}</span>
+const IconButton = ({ icon, onClick, active }: any) => (
+  <button
+    onClick={onClick}
+    className={cn(
+      "w-10 h-10 rounded-2xl flex items-center justify-center border transition-all",
+      active ? "bg-indigo-600 border-indigo-500 text-white shadow-lg" : "bg-white/5 border-white/5 text-slate-400 hover:border-white/10 hover:text-white"
+    )}
+  >
+    {icon}
+  </button>
+);
+
+const SettingsPanel = ({ config, setConfig, onClose }: any) => (
+  <motion.div
+    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+    className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-6"
+    onClick={onClose}
+  >
+    <motion.div
+      initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+      className="max-w-md w-full glass-card p-8 rounded-[3rem] border border-white/10 shadow-2xl relative"
+      onClick={e => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-xl font-black italic">DATABASE CONFIG</h2>
+        <button onClick={onClose} className="p-2 hover:bg-white/5 rounded-full transition-all">✕</button>
       </div>
-      <span className="text-[10px] text-text-muted bg-white/5 px-2 py-0.5 rounded uppercase font-bold">{type}</span>
-    </div>
-    <div className="flex items-center justify-between">
-      <div className="flex -space-x-2">
-        {[1, 2, 3].map(i => <div key={i} className="w-5 h-5 rounded-full border border-background bg-slate-700 flex items-center justify-center text-[8px]">{i}</div>)}
+
+      <div className="space-y-6">
+        <div className="space-y-2">
+          <label className="text-[10px] uppercase font-black text-slate-500 tracking-widest pl-1">Server Interface</label>
+          <input
+            type="text"
+            value={config.serverUrl}
+            onChange={(e) => setConfig({ ...config, serverUrl: e.target.value })}
+            className="w-full bg-black/40 border border-white/5 rounded-2xl px-5 py-4 text-sm focus:border-indigo-500 outline-none"
+            placeholder="http://1.1.1.1:2026"
+          />
+        </div>
+        <div className="space-y-2">
+          <label className="text-[10px] uppercase font-black text-slate-500 tracking-widest pl-1">Dashboard Token</label>
+          <input
+            type="password"
+            value={config.token}
+            onChange={(e) => setConfig({ ...config, token: e.target.value })}
+            className="w-full bg-black/40 border border-white/5 rounded-2xl px-5 py-4 text-sm focus:border-indigo-500 outline-none"
+            placeholder="********"
+          />
+        </div>
+
+        <div className="pt-4">
+          <button
+            onClick={() => setConfig({ ...config, isLive: !config.isLive })}
+            className={cn(
+              "w-full py-5 rounded-[2rem] font-black uppercase tracking-[0.3em] text-xs transition-all",
+              config.isLive ? "bg-emerald-500 text-black shadow-lg shadow-emerald-500/40" : "bg-indigo-600 text-white shadow-lg shadow-indigo-500/40"
+            )}
+          >
+            {config.isLive ? 'ON SERVICE (LIVE)' : 'OFFLINE (SIM)'}
+          </button>
+        </div>
       </div>
-      <div className="text-right">
-        <p className="text-[10px] text-text-muted uppercase">已处理任务</p>
-        <p className="text-xs font-bold">{tasks}</p>
-      </div>
-    </div>
-  </div>
+
+      <p className="mt-8 text-[9px] text-slate-600 text-center leading-relaxed font-bold tracking-widest uppercase">所有数据已通过 IndexedDB 进行本地持久化存储，支持保存最近 30 天的历史负载与消耗数据。</p>
+    </motion.div>
+  </motion.div>
 );
 
 export default App;
