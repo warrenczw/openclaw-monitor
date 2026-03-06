@@ -28,6 +28,8 @@ const App = () => {
   // Data States
   const [cpuStats, setCpuStats] = useState<StatEntry[]>([]);
   const [tokenStats, setTokenStats] = useState<TokenEntry[]>([]);
+  const [robots, setRobots] = useState<any[]>([]);
+  const [serviceStatus, setServiceStatus] = useState<string>('离线');
   const [logs, setLogs] = useState<{ id: number; time: string; type: string; msg: string }[]>([]);
   const [timeGranularity, setTimeGranularity] = useState<Granularity>('hour');
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString('zh-CN'));
@@ -55,22 +57,21 @@ const App = () => {
       setCurrentTime(new Date().toLocaleTimeString('zh-CN'));
       if (config.isLive) {
         fetchRealData();
+      } else {
+        setServiceStatus('演示模式');
       }
-    }, 5000);
+    }, 3000);
     return () => clearInterval(timer);
   }, [config.isLive, config.serverUrl]);
 
   const fetchRealData = async () => {
     try {
-      // ⚠️ 这里是您的对接点: 替换为您真实的 OpenClaw 监控接口路径
       const response = await fetch(`${config.serverUrl}/api/v1/monitor`, {
         headers: { 'Authorization': `Bearer ${config.token}` }
       });
 
       if (response.ok) {
         const data = await response.json();
-
-        // 1. 存入本地数据库
         const newStat = {
           timestamp: Date.now(),
           cpu: data.cpu,
@@ -90,14 +91,18 @@ const App = () => {
           });
         }
 
-        // 2. 更新页面状态流
         setCpuStats(prev => [...prev.slice(-49), newStat]);
+        setServiceStatus(data.serviceStatus || '正常');
+        if (data.robots) setRobots(data.robots);
+
         if (data.newLog) {
           setLogs(prev => [{ id: Date.now(), time: new Date().toLocaleTimeString(), ...data.newLog }, ...prev.slice(0, 10)]);
         }
+      } else {
+        setServiceStatus('连接异常');
       }
     } catch (err) {
-      console.warn("无法连接到监控接口，请检查服务器配置。");
+      setServiceStatus('无法连接');
     }
   };
 
@@ -148,8 +153,8 @@ const App = () => {
           <div>
             <h1 className="text-2xl font-black bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400 tracking-tighter">OPENCLAW <span className="font-light">PRO MONITOR</span></h1>
             <div className="flex items-center gap-2 mt-1">
-              <span className={cn("inline-block w-2 h-2 rounded-full", config.isLive ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400')} />
-              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">{config.isLive ? '生产环境在线' : '离线/本地存储模式'}</p>
+              <span className={cn("inline-block w-2 h-2 rounded-full", serviceStatus.includes('运行') || serviceStatus === '正常' ? 'bg-emerald-400 animate-pulse' : 'bg-red-500')} />
+              <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">服务状态: {serviceStatus}</p>
             </div>
           </div>
         </div>
@@ -265,6 +270,22 @@ const App = () => {
                   <Area type="monotone" dataKey="ram" stroke="#a855f7" strokeWidth={2} fillOpacity={0} />
                 </AreaChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* 机器人状态列表 */}
+          <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 bg-[#141b2d]/50">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-400"><Server size={20} /></div>
+                <h2 className="text-xl font-bold">机器人实例状态</h2>
+              </div>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">活跃实例: {robots.filter(r => r.status === 'working').length}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {robots.map((robot, i) => (
+                <RobotCard key={i} {...robot} />
+              ))}
             </div>
           </div>
         </section>
@@ -412,6 +433,43 @@ const SettingsPanel = ({ config, setConfig, onClose }: any) => (
       <p className="mt-8 text-[9px] text-slate-600 text-center leading-relaxed font-bold tracking-widest uppercase">所有数据已通过 IndexedDB 进行本地持久化存储，支持保存最近 30 天的历史负载与消耗数据。</p>
     </motion.div>
   </motion.div>
+);
+
+const RobotCard = ({ name, status, type, tasks }: any) => (
+  <div className="p-5 rounded-[1.5rem] border border-white/5 bg-white/[0.03] hover:bg-white/[0.06] transition-all group relative overflow-hidden">
+    <div className="flex items-center justify-between mb-4 relative z-10">
+      <div className="flex items-center gap-3">
+        <div className={cn(
+          "w-2.5 h-2.5 rounded-full",
+          status === 'working' ? "bg-emerald-400 animate-pulse" : status === 'paused' ? "bg-slate-600" : "bg-blue-400"
+        )} />
+        <span className="font-bold text-sm tracking-tight">{name}</span>
+      </div>
+      <span className="text-[9px] font-black text-slate-500 bg-black/20 px-2 py-0.5 rounded-lg border border-white/5 uppercase tracking-widest">{type}</span>
+    </div>
+
+    <div className="flex items-center justify-between relative z-10">
+      <div className="flex flex-col">
+        <span className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">当前状态</span>
+        <span className={cn(
+          "text-xs font-bold",
+          status === 'working' ? "text-emerald-400" : status === 'paused' ? "text-slate-500" : "text-blue-400"
+        )}>
+          {status === 'working' ? '工作中...' : status === 'paused' ? '已暂停' : '空闲'}
+        </span>
+      </div>
+      <div className="text-right">
+        <p className="text-[10px] font-black text-slate-500 uppercase tracking-tighter">累计处理</p>
+        <p className="text-sm font-black text-white">{tasks}</p>
+      </div>
+    </div>
+
+    {/* 背景装饰 */}
+    <div className={cn(
+      "absolute -bottom-10 -right-10 w-24 h-24 blur-[40px] opacity-10 transition-all",
+      status === 'working' ? "bg-emerald-500" : status === 'paused' ? "bg-slate-500" : "bg-blue-500"
+    )} />
+  </div>
 );
 
 export default App;
