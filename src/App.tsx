@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Activity, Cpu, Database, Zap, Search, Settings, Bell, Clock, Terminal, Server, Layers, CheckCircle2, AlertCircle, TrendingUp, CreditCard, Calendar, BarChart, ChevronRight, Download
+  Activity, Cpu, Database, Zap, Search, Settings, Bell, Terminal, Server, Layers, CreditCard, BarChart, ChevronRight
 } from 'lucide-react';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, BarChart as RechartsBarChart, Bar, Legend
@@ -8,7 +8,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { format, subDays, startOfDay, startOfMonth, startOfYear, isAfter } from 'date-fns';
+import { format, subDays, startOfDay, startOfMonth, startOfYear } from 'date-fns';
 import { db, type StatEntry, type TokenEntry, cleanupOldData } from './db';
 
 function cn(...inputs: ClassValue[]) {
@@ -207,6 +207,24 @@ const App = () => {
         />
       </div>
 
+      {/* 机器人状态列表 - 顶部显眼位置 */}
+      <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 bg-[#141b2d]/50 mb-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-400"><Server size={20} /></div>
+            <h2 className="text-xl font-bold">机器人实例实时监控</h2>
+          </div>
+          <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-black/20 px-4 py-1.5 rounded-full border border-white/5">
+            工作中: {robots.filter(r => r.status === 'working').length} / 总机: {robots.length}
+          </p>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {robots.map((robot, i) => (
+            <RobotCard key={i} {...robot} />
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
 
         {/* Token 消耗图表 (核心更新项) */}
@@ -270,22 +288,6 @@ const App = () => {
                   <Area type="monotone" dataKey="ram" stroke="#a855f7" strokeWidth={2} fillOpacity={0} />
                 </AreaChart>
               </ResponsiveContainer>
-            </div>
-          </div>
-
-          {/* 机器人状态列表 */}
-          <div className="glass-card p-8 rounded-[2.5rem] border border-white/5 bg-[#141b2d]/50">
-            <div className="flex items-center justify-between mb-8">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 bg-amber-500/10 rounded-xl text-amber-400"><Server size={20} /></div>
-                <h2 className="text-xl font-bold">机器人实例状态</h2>
-              </div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">活跃实例: {robots.filter(r => r.status === 'working').length}</span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {robots.map((robot, i) => (
-                <RobotCard key={i} {...robot} />
-              ))}
             </div>
           </div>
         </section>
