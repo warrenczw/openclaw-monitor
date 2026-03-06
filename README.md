@@ -45,12 +45,27 @@ npm run build
 ```
 构建产生的文件将位于 `dist/` 目录中，您可以将其部署到任一静态托管服务上。
 
+### 6. 运行 Python 后端 (可选)
+
+项目包含一个简单的 Python 后端，用于采集本地系统指标并存入 SQLite 数据库。
+
+```bash
+cd server
+source venv/bin/activate  # macOS/Linux
+# 如果是 Windows: venv\Scripts\activate
+python main.py
+```
+后端将运行在 `http://localhost:2026`。
+
 ## ⚙️ 对接 OpenClaw 服务器
 
 1. 进入监控页面，点击右上角的 **齿轮图标 (Settings)**。
-2. 输入您的 OpenClaw 服务器基础 URL (例如 `http://your-server-ip:2026`)。
-3. 输入您的访问令牌。
+2. 输入您的 OpenClaw 服务器基础 URL：
+   - 如果运行了自带后端，输入：`http://localhost:2026`
+   - 如果对接远程服务器，输入：`http://your-server-ip:port`
+3. 输入您的访问令牌 (Token)。
 4. 开启 **“连接生产环境”** 开关。
+5. 页面将自动开始从后端抓取数据，并持久化存储在您浏览器的 IndexedDB 中。
 
 ## 📄 许可证
 
